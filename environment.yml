@@ -1,0 +1,24 @@
+name: cv-prince
+channels:
+    - conda-forge
+dependencies:
+    - python==3.5.2
+    - numpy==1.15
+    - matplotlib
+    - jupyter
+    - opencv
+    - pillow
+    - scikit-learn
+    - scikit-image
+    - scipy
+    - h5py
+    - eventlet
+    - flask-socketio
+    - seaborn
+    - pandas
+    - imageio
+    - sympy
+    - pip:
+        - moviepy
+        - tensorflow==1.13.1
+        - git+https://github.com/fchollet/keras.git
