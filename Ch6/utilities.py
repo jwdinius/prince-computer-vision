@@ -9,7 +9,25 @@ reload(common)
 
 import unittest
 
-def basic_generative_classifier(num_labels, training_data, training_labels, new_datapoint=None):
+def evaluate_posterior_probabilities(mus, Sigmas, _lambdas, new_datapoint):
+	if mus.shape[0] != _lambdas.size or mus.shape[0] != Sigmas.shape[0]:
+		raise AssertionError('\'mus\', \'Sigmas\', and/or \'_lambdas\' sizes don\'t match.')
+	if mus[0].size != new_datapoint.size:
+		raise AssertionError('\'mus\' and \'new_datapoint\' sizes don\'t match.')
+	if mus[0].size != Sigmas[0].shape[0] or Sigmas[0].shape[0] != Sigmas[0].shape[1]:
+		raise AssertionError('\'mus\' and \'Sigmas\' sizes don\'t match.')
+	likelihoods = np.zeros((mus.shape[0],))
+	posteriors = np.zeros_like(likelihoods)
+	for l in range(mus.shape[0]):
+		likelihoods[l] = stats.multivariate_normal.pdf(new_datapoint, mean=mus[l, :], cov=Sigmas[l, :, :])
+	denom = np.sum([p*lam for p, lam in zip(likelihoods, _lambdas)])
+	# Classify new datapoint using Bayes' rule
+	# (NOTE(jwd) - this approach is slow, but follows the pseudocode in the algorithm manual)
+	for i in range(mus.shape[0]):
+		posteriors[i] = likelihoods[i] * _lambdas[i] / denom
+	return posteriors
+	
+def basic_generative_classifier(num_labels, training_data, training_labels):
 	# Algorithm 6.1
 	training_labels = np.copy(training_labels).ravel()
 	valid_labels = np.array([k for k in range(num_labels)])
@@ -19,19 +37,13 @@ def basic_generative_classifier(num_labels, training_data, training_labels, new_
 	if not training_data.shape[1] == training_labels.size:
 		raise ValueError('\'training_data\' and \'training_labels\' sizes don\'t match.')
 
-	if new_datapoint is not None and new_datapoint.size != training_data.shape[0]:
-		raise ValueError('\'new_datapoint\' is not sized properly.')
-
 	I = float(training_labels.size)
 	
 	# For each training class
 	# initialize array for lambda prior
 	_lambdas = np.zeros((num_labels,))
-	mus = np.zeros((training_data.shape[0], num_labels))
-	Sigmas = np.zeros((training_data.shape[0], training_data.shape[0], num_labels))
-	
-	if new_datapoint is not None:
-		likelihoods = np.zeros((num_labels,))
+	mus = np.zeros((num_labels, training_data.shape[0]))
+	Sigmas = np.zeros((num_labels, training_data.shape[0], training_data.shape[0]))
 
 	for k in valid_labels:
 		_labels = training_labels[training_labels==k]
@@ -40,27 +52,14 @@ def basic_generative_classifier(num_labels, training_data, training_labels, new_
 		# Set mean
 		# (NOTE(jwd): use the transpose of training data because of how numpy iterates over containers)
 		mu_k = np.sum([xi*common.delta_function(wi-k) for xi,wi in zip(training_data.T, training_labels)]) / denom
-		mus[:, k] = mu_k
+		mus[k, :] = mu_k
 		# Set variance
 		# (NOTE(jwd): use the transpose of training data because of how numpy iterates over containers)
 		Sigma_k = np.sum([(xi-mu_k)@(xi-mu_k).T * common.delta_function(wi-k) for xi,wi in zip(training_data.T, training_labels)]) / denom
-		Sigmas[:, :, k] = Sigma_k
+		Sigmas[k, :, :] = Sigma_k
 		# Set prior
 		_lambdas[k] = denom / I
-		
-		if new_datapoint is not None:
-			# Compute likelihoods for each class for a new datapoint
-			likelihoods[k] = stats.multivariate_normal.pdf(new_datapoint, mean=mu_k, cov=Sigma_k)
-	
-	if new_datapoint is not None:
-		posteriors = np.zeros_like(likelihoods)
-		denom = np.sum([l*lam for l, lam in zip(likelihoods, _lambdas)])
-		# Classify new datapoint using Bayes' rule
-		# (NOTE(jwd) - this approach is slow, but follows the pseudocode in the algorithm manual)
-		for i in range(num_labels):
-			posteriors[i] = likelihoods[i] * _lambdas[i] / denom
-		return _lambdas, mus, Sigmas, posteriors
-	return _lambdas, mus, Sigmas, None
+	return _lambdas, mus, Sigmas
 
 
 class TestBasicGenerativeClassifier(unittest.TestCase):
@@ -78,29 +77,26 @@ class TestBasicGenerativeClassifier(unittest.TestCase):
 
 	def test_invalid_labels(self):
 		num_labels = 1
-		self.assertRaises(ValueError, basic_generative_classifier, num_labels, self.data, self.labels, new_datapoint=None)
+		self.assertRaises(ValueError, basic_generative_classifier, num_labels, self.data, self.labels)
 
 	def test_invalid_sizes(self):
 		# vary size of input data by 1
-		self.assertRaises(ValueError, basic_generative_classifier, self.num_labels, self.data[0, 1:].reshape((1, 199)), self.labels, new_datapoint=None)
-
-	def test_invalid_datapoint(self):
-		bad_data = np.array([[1.], [1.]])
-		self.assertRaises(ValueError, basic_generative_classifier, self.num_labels, self.data, self.labels, new_datapoint=bad_data)
+		self.assertRaises(ValueError, basic_generative_classifier, self.num_labels, self.data[0, 1:].reshape((1, 199)), self.labels)
 
 	def test_output_no_datapoint(self):
-		_lambdas, mus, Sigmas, _ = basic_generative_classifier(self.num_labels, self.data, self.labels)
+		_lambdas, mus, Sigmas = basic_generative_classifier(self.num_labels, self.data, self.labels)
 		self.assertTrue(np.isclose(_lambdas[0], _lambdas[1]))
 		self.assertAlmostEqual(mus[0, 0], self.mu_0, places=0)
-		self.assertAlmostEqual(mus[0, 1], self.mu_1, places=0)
+		self.assertAlmostEqual(mus[1, 0], self.mu_1, places=0)
 		self.assertAlmostEqual(Sigmas[0, 0, 0], self.var_0, places=0)
-		self.assertAlmostEqual(Sigmas[0, 0, 1], self.var_1, places=0)
+		self.assertAlmostEqual(Sigmas[1, 0, 0], self.var_1, places=0)
 
 	def test_output_datapoint(self):
 		# make sure that it is more likely to have one label when datapoint is near the mean of one world distribution
-		_lambdas, mus, Sigmas, posterior_probs = basic_generative_classifier(self.num_labels, self.data, self.labels, new_datapoint=np.array([[-3.]]))
+		_lambdas, mus, Sigmas = basic_generative_classifier(self.num_labels, self.data, self.labels)
+		posterior_probs = evaluate_posterior_probabilities(mus, Sigmas, _lambdas, np.array([[-3.]]))
 		self.assertTrue(posterior_probs[0] > 0.5)
-		_lambdas, mus, Sigmas, posterior_probs = basic_generative_classifier(self.num_labels, self.data, self.labels, new_datapoint=np.array([[3.]]))
+		posterior_probs = evaluate_posterior_probabilities(mus, Sigmas, _lambdas, np.array([[3.]]))
 		self.assertTrue(posterior_probs[1] > 0.5)
 		
 
