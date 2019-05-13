@@ -1,6 +1,7 @@
 import numpy as np
 import scipy.special as sci_spec
 import scipy.stats as stats
+from scipy.optimize import minimize
 import sys
 sys.path.append("..")
 from importlib import reload
@@ -9,6 +10,7 @@ reload(common)
 
 import unittest
 
+'''
 def evaluate_posterior_probabilities(mus, Sigmas, _lambdas, new_datapoint):
 	if mus.shape[0] != _lambdas.size or mus.shape[0] != Sigmas.shape[0]:
 		raise AssertionError('\'mus\', \'Sigmas\', and/or \'_lambdas\' sizes don\'t match.')
@@ -26,79 +28,159 @@ def evaluate_posterior_probabilities(mus, Sigmas, _lambdas, new_datapoint):
 	for i in range(mus.shape[0]):
 		posteriors[i] = likelihoods[i] * _lambdas[i] / denom
 	return posteriors
-	
-def basic_generative_classifier(num_labels, training_data, training_labels):
-	# Algorithm 6.1
-	training_labels = np.copy(training_labels).ravel()
-	valid_labels = np.array([k for k in range(num_labels)])
-	if not all([l in valid_labels for l in training_labels]):
-		raise ValueError('\'training_labels\' is invalid given \'num_labels\'.')
+'''
 
-	if not training_data.shape[1] == training_labels.size:
-		raise ValueError('\'training_data\' and \'training_labels\' sizes don\'t match.')
+def fit_gaussian_mixture(training_data, num_clusters, stopping_thresh=1e-2):
+	# Algorithm 7.1
+	I = float(training_data.shape[0])
+	num_clusters = int(num_clusters)
+	if num_clusters < 1:
+		raise AssertionError('`num_clusters` must be >= 1')
 
-	I = float(training_labels.size)
-	
-	# For each training class
-	# initialize array for lambda prior
-	_lambdas = np.zeros((num_labels,))
-	mus = np.zeros((num_labels, training_data.shape[0]))
-	Sigmas = np.zeros((num_labels, training_data.shape[0], training_data.shape[0]))
+	# initialization
+	_lambdas = np.array([1./float(num_clusters) for _ in range(num_clusters)])
+	rng = np.random.RandomState(seed=0)
+	mus = rng.randn(num_clusters, training_data.shape[1])
+	Sigmas = np.zeros((num_clusters, training_data.shape[1], training_data.shape[1]))
+	for k in range(num_clusters):
+		sqrt_Sigmas = rng.randn(training_data.shape[1], training_data.shape[1])
+		# setup a diagonal covariance matrix
+		Sigmas[k, :, :] = sqrt_Sigmas@sqrt_Sigmas.T
 
-	for k in valid_labels:
-		_labels = training_labels[training_labels==k]
-		_data = training_data[:, training_labels==k]
-		denom = np.sum([common.delta_function(wi-k) for wi in training_labels])
-		# Set mean
-		# (NOTE(jwd): use the transpose of training data because of how numpy iterates over containers)
-		mu_k = np.sum([xi*common.delta_function(wi-k) for xi,wi in zip(training_data.T, training_labels)]) / denom
-		mus[k, :] = mu_k
-		# Set variance
-		# (NOTE(jwd): use the transpose of training data because of how numpy iterates over containers)
-		Sigma_k = np.sum([(xi-mu_k)@(xi-mu_k).T * common.delta_function(wi-k) for xi,wi in zip(training_data.T, training_labels)]) / denom
-		Sigmas[k, :, :] = Sigma_k
-		# Set prior
-		_lambdas[k] = denom / I
+	# initialize log-likelihood
+	L_prev = None
+	its = 0
+	while True:
+		its += 1
+		# Expectation Step
+		l = np.zeros((int(I), num_clusters))
+		r = np.zeros((int(I), num_clusters))
+		for i,_data in enumerate(training_data):
+			for k in range(num_clusters):
+				# numerator of Bayes' rule
+				l[i, k] = stats.multivariate_normal.pdf(_data, mean=mus[k, :], cov=Sigmas[k, :, :])
+			total_prob = np.sum(l[i, :])
+			for k in range(num_clusters):
+				# Compute posterior (responsibilities) by normalizing
+				r[i, k] = l[i, k] / total_prob
+		# Maximization Step
+		nrmlzr = np.sum(np.sum(r, axis=0))
+		for k in range(num_clusters):
+			sum_r = np.sum(r[:, k])
+			_lambdas[k] = np.sum(r[:, k]) / nrmlzr
+			weighted_data = np.zeros((1, training_data.shape[1]))
+			for i in range(int(I)):
+				weighted_data += r[i, k] * training_data[i, :]
+			mus[k, :] = weighted_data / sum_r
+			new_Sigma = np.zeros((training_data.shape[1], training_data.shape[1]))
+			for i in range(int(I)):
+				delta = (training_data[i, :] - mus[k, :]).reshape((1, 2))
+				resp_weighted_delta = r[i, k] * delta.T@delta
+				new_Sigma += resp_weighted_delta
+			#Sigmas[k, :, :] = np.diag(np.diag(new_Sigma /sum_r))
+			Sigmas[k, :, :] = new_Sigma /sum_r
+		# Compute Data Log Likelihood and EM Bound
+		tmp = np.zeros((int(I), num_clusters))
+		for i in range(int(I)):
+			for k in range(num_clusters):
+				tmp[i, k] = _lambdas[k] * stats.multivariate_normal.pdf(training_data[i, :], mean=mus[k, :], cov=Sigmas[k, :, :])
+		tmp = np.sum(tmp, axis=1)
+		L = np.sum(np.log(tmp))
+		# if uninitialized, set L_prev and move on to next loop iteration
+		if L_prev is None:
+			L_prev = L
+			continue
+		if np.abs(L-L_prev) < stopping_thresh:
+			print('stopping criteria met after {its} iterations.'.format(its=its))
+			break
+		L_prev = L
 	return _lambdas, mus, Sigmas
 
 
-class TestBasicGenerativeClassifier(unittest.TestCase):
-	mu_0, var_0 = -2., 0.5
-	mu_1, var_1 = 2., 0.5
-	num_labels = 2
-	n_samples = 100
-	distro = np.random.RandomState(seed=0)
-	data = np.empty((1, 2*n_samples))
-	data[0, :n_samples] = np.sqrt(var_0) * distro.randn(n_samples) + mu_0
-	data[0, n_samples:] = np.sqrt(var_1) * distro.randn(n_samples) + mu_1
-	labels = np.empty((2*n_samples,))
-	labels[:n_samples] = 0
-	labels[n_samples:] = 1
+def fit_student_distribution(training_data, stopping_thresh=1e-2):
+	# Algorithm 7.2
+	I, D = [float(t) for t in training_data.shape]
+	
+	# initialization: follows footnote a) of algorithm guide
+	rng = np.random.RandomState(seed=0)
+	mu = np.mean(training_data, axis=0)
+	x_minus_mu = np.array([d - mu for d in training_data])
+	Sigma = np.zeros((int(D), int(D)))
+	for d in x_minus_mu:
+		Sigma += np.outer(d, d) / I
+	nu = 1.0e6
+	
+	# define objective function for maximizing likelihood wrt nu
+	def t_fit_cost(nu, E_h, E_log_h):
+		return -(float(E_h.shape[0]) * (0.5 * nu * np.log(0.5 * nu) 
+			+ sci_spec.gammaln(0.5 * nu)) - (0.5 * nu - 1.) * np.sum(E_log_h) + (0.5 * nu - 1.) * np.sum(E_h)
+		)
 
-	def test_invalid_labels(self):
-		num_labels = 1
-		self.assertRaises(ValueError, basic_generative_classifier, num_labels, self.data, self.labels)
+	# initialize log-likelihood
+	L_prev = None
+	its = 0
+	while True:
+		its += 1
+		# Expectation step
+		x_minus_mu = np.array([d - mu for d in training_data])
+		inv_sigma = np.linalg.inv(Sigma)
+		delta = np.array([d.reshape((1, int(D)))@inv_sigma@d.reshape((int(D), 1)) for d in x_minus_mu]).flatten()
+		E_h = np.array([(nu + D) / (nu + d) for d in delta])
+		E_logh = np.array([sci_spec.digamma((nu+D)/2) - np.log((nu+d)/2.) for d in x_minus_mu])
 
-	def test_invalid_sizes(self):
-		# vary size of input data by 1
-		self.assertRaises(ValueError, basic_generative_classifier, self.num_labels, self.data[0, 1:].reshape((1, 199)), self.labels)
+		# Maximization step
+		sum_E_h = np.sum(E_h)
+		sum_E_h_times_x = np.zeros((1, int(D)))
+		for i in range(int(I)):
+			sum_E_h_times_x += E_h[i] * training_data[i]
+		mu = sum_E_h_times_x / sum_E_h
+		x_minus_mu = np.array([d - mu for d in training_data])
+		Sigma = np.zeros((int(D), int(D)))
+		for i in range(int(I)):
+			d = training_data[i].reshape((1, int(D)))
+			Sigma += E_h[i] * np.outer(d, d) / sum_E_h
+		x0 = np.array([[nu]])
+		bnds = [(1e-15, 1e15)]
+		sol = minimize(t_fit_cost, x0, args=(E_h, E_logh), bounds=bnds)
+		nu = sol.x
 
-	def test_output_no_datapoint(self):
-		_lambdas, mus, Sigmas = basic_generative_classifier(self.num_labels, self.data, self.labels)
-		self.assertTrue(np.isclose(_lambdas[0], _lambdas[1]))
-		self.assertAlmostEqual(mus[0, 0], self.mu_0, places=0)
-		self.assertAlmostEqual(mus[1, 0], self.mu_1, places=0)
-		self.assertAlmostEqual(Sigmas[0, 0, 0], self.var_0, places=0)
-		self.assertAlmostEqual(Sigmas[1, 0, 0], self.var_1, places=0)
+		# Compute the log likelihood
+		L = I * (sci_spec.gammaln((nu + D)/2) - (D/2) * np.log(nu * np.pi)- np.log(np.linalg.det(Sigma)) / 2 - sci_spec.gammaln(nu/2))
+		s = np.sum([np.log(1. + d/nu) for d in delta])
+		L -= (nu + D) * s
+		if L_prev is None:
+			L_prev = L
+			continue
+		if np.abs(L-L_prev) < stopping_thresh:
+			print('stopping criteria met after {its} iterations.'.format(its=its))
+			break
+		L_prev = L
+	return mu, Sigma, nu
 
-	def test_output_datapoint(self):
-		# make sure that it is more likely to have one label when datapoint is near the mean of one world distribution
-		_lambdas, mus, Sigmas = basic_generative_classifier(self.num_labels, self.data, self.labels)
-		posterior_probs = evaluate_posterior_probabilities(mus, Sigmas, _lambdas, np.array([[-3.]]))
-		self.assertTrue(posterior_probs[0] > 0.5)
-		posterior_probs = evaluate_posterior_probabilities(mus, Sigmas, _lambdas, np.array([[3.]]))
-		self.assertTrue(posterior_probs[1] > 0.5)
-		
+
+class TestFMOG(unittest.TestCase):
+	def test_basic_call(self):
+		# just check to make sure the call is functioning for nominal input
+		rng = np.random.RandomState(seed=0)
+		mu1 = np.array([1., 2.])
+		cov1 = np.array([[2., 0.], [0., .5]])
+		mu2 = np.array([3., 5.])
+		cov2 = np.array([[1., 0.], [0., .1]])
+		X = np.vstack((rng.multivariate_normal(mu1, cov1, 500), rng.multivariate_normal(mu2, cov2, 500)))
+		_lambdas, mus, Sigmas = fit_gaussian_mixture(X, 2)
+
+class TestStudentFit(unittest.TestCase):
+	# just check to make sure the call is functioning for nominal input
+	rng = np.random.RandomState(seed=0)
+	mu1 = np.array([1., 2.])
+	cov1 = np.array([[2., 0.], [0., .5]])
+	num_data_pts = np.array([200])
+	X = rng.multivariate_normal(mu1, cov1, num_data_pts[0])
+	num_outliers = 15
+	outliers_mu = np.array([5., 7.])
+	outliers_Sigma = np.array([[.2, 0.], [0., .2]])
+	X_with_outliers = np.vstack((X, rng.multivariate_normal(outliers_mu, outliers_Sigma, num_outliers)))
+	t_mu, t_sig, t_nu = fit_student_distribution(X_with_outliers, stopping_thresh=1e-6)
 
 if __name__ == '__main__':
 	unittest.main()
