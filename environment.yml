@@ -2,8 +2,9 @@ name: cv-prince
 channels:
     - conda-forge
 dependencies:
-    - python==3.5.2
-    - numpy==1.15
+    - python
+    - pip
+    - numpy
     - matplotlib
     - jupyter
     - opencv
