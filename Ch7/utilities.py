@@ -1,7 +1,7 @@
 import numpy as np
 import scipy.special as sci_spec
 import scipy.stats as stats
-from scipy.optimize import minimize
+from scipy.optimize import minimize, fminbound
 import sys
 sys.path.append("..")
 from importlib import reload
@@ -108,13 +108,11 @@ def fit_student_distribution(training_data, stopping_thresh=1e-2):
 	Sigma = np.zeros((int(D), int(D)))
 	for d in x_minus_mu:
 		Sigma += np.outer(d, d) / I
-	nu = 1.0e6
+	nu = 10.
 	
 	# define objective function for maximizing likelihood wrt nu
-	def t_fit_cost(nu, E_h, E_log_h):
-		return -(float(E_h.shape[0]) * (0.5 * nu * np.log(0.5 * nu) 
-			+ sci_spec.gammaln(0.5 * nu)) - (0.5 * nu - 1.) * np.sum(E_log_h) + (0.5 * nu - 1.) * np.sum(E_h)
-		)
+	def t_fit_cost(nu, _E_h, _E_logh):
+		return -(float(_E_h.size) * (0.5 * nu * np.log(0.5 * nu) + sci_spec.gammaln(0.5 * nu)) - (0.5 * nu - 1.) * np.sum(_E_logh) + 0.5 * nu * np.sum(_E_h))
 
 	# initialize log-likelihood
 	L_prev = None
@@ -125,9 +123,9 @@ def fit_student_distribution(training_data, stopping_thresh=1e-2):
 		x_minus_mu = np.array([d - mu for d in training_data])
 		inv_sigma = np.linalg.inv(Sigma)
 		delta = np.array([d.reshape((1, int(D)))@inv_sigma@d.reshape((int(D), 1)) for d in x_minus_mu]).flatten()
-		E_h = np.array([(nu + D) / (nu + d) for d in delta])
-		E_logh = np.array([sci_spec.digamma((nu+D)/2) - np.log((nu+d)/2.) for d in x_minus_mu])
-
+		E_h = np.array([(nu + D) / (nu + d) for d in delta]).flatten()
+		E_logh = np.array([sci_spec.digamma((nu+D)/2) - np.log((nu+float(d))/2.) for d in delta]).flatten()
+		
 		# Maximization step
 		sum_E_h = np.sum(E_h)
 		sum_E_h_times_x = np.zeros((1, int(D)))
@@ -137,10 +135,12 @@ def fit_student_distribution(training_data, stopping_thresh=1e-2):
 		x_minus_mu = np.array([d - mu for d in training_data])
 		Sigma = np.zeros((int(D), int(D)))
 		for i in range(int(I)):
-			d = training_data[i].reshape((1, int(D)))
+			d = x_minus_mu[i].reshape((1, int(D)))
 			Sigma += E_h[i] * np.outer(d, d) / sum_E_h
+		inv_sigma = np.linalg.inv(Sigma)
+		delta = np.array([d.reshape((1, int(D)))@inv_sigma@d.reshape((int(D), 1)) for d in x_minus_mu]).flatten()
 		x0 = np.array([[nu]])
-		bnds = [(1e-15, 1e15)]
+		bnds = [(1e-15, 1e3)]
 		sol = minimize(t_fit_cost, x0, args=(E_h, E_logh), bounds=bnds)
 		nu = sol.x
 
