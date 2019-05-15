@@ -99,6 +99,12 @@ def fit_gaussian_mixture(training_data, num_clusters, stopping_thresh=1e-2):
 
 def fit_student_distribution(training_data, stopping_thresh=1e-2):
 	# Algorithm 7.2
+	'''
+	TODO(jwd): THIS IS NOT WORKING PROPERLY
+	algorithm was compared against the pseudocode implementation (see Prince_Algorithms_Booklet.pdf) and
+	all signs and formulae are correct
+	'''
+	
 	I, D = [float(t) for t in training_data.shape]
 	
 	# initialization: follows footnote a) of algorithm guide
@@ -108,7 +114,7 @@ def fit_student_distribution(training_data, stopping_thresh=1e-2):
 	Sigma = np.zeros((int(D), int(D)))
 	for d in x_minus_mu:
 		Sigma += np.outer(d, d) / I
-	nu = 10.
+	nu = 1000.
 	
 	# define objective function for maximizing likelihood wrt nu
 	def t_fit_cost(nu, _E_h, _E_logh):
@@ -124,7 +130,7 @@ def fit_student_distribution(training_data, stopping_thresh=1e-2):
 		inv_sigma = np.linalg.inv(Sigma)
 		delta = np.array([d.reshape((1, int(D)))@inv_sigma@d.reshape((int(D), 1)) for d in x_minus_mu]).flatten()
 		E_h = np.array([(nu + D) / (nu + d) for d in delta]).flatten()
-		E_logh = np.array([sci_spec.digamma((nu+D)/2) - np.log((nu+float(d))/2.) for d in delta]).flatten()
+		E_logh = np.array([sci_spec.digamma((nu+D)/2.) - np.log((nu+d)/2.) for d in delta]).flatten()
 		
 		# Maximization step
 		sum_E_h = np.sum(E_h)
@@ -135,19 +141,19 @@ def fit_student_distribution(training_data, stopping_thresh=1e-2):
 		x_minus_mu = np.array([d - mu for d in training_data])
 		Sigma = np.zeros((int(D), int(D)))
 		for i in range(int(I)):
-			d = x_minus_mu[i].reshape((1, int(D)))
+			d = x_minus_mu[i]
 			Sigma += E_h[i] * np.outer(d, d) / sum_E_h
 		inv_sigma = np.linalg.inv(Sigma)
 		delta = np.array([d.reshape((1, int(D)))@inv_sigma@d.reshape((int(D), 1)) for d in x_minus_mu]).flatten()
-		x0 = np.array([[nu]])
+		x0 = nu
 		bnds = [(1e-15, 1e3)]
 		sol = minimize(t_fit_cost, x0, args=(E_h, E_logh), bounds=bnds)
-		nu = sol.x
-
+		nu = sol.x[0]
+		
 		# Compute the log likelihood
-		L = I * (sci_spec.gammaln((nu + D)/2) - (D/2) * np.log(nu * np.pi)- np.log(np.linalg.det(Sigma)) / 2 - sci_spec.gammaln(nu/2))
+		L = I * (sci_spec.gammaln((nu + D)/2.) - (D/2.) * np.log(nu * np.pi)- np.log(np.linalg.det(Sigma)) / 2. - sci_spec.gammaln(nu/2.))
 		s = np.sum([np.log(1. + d/nu) for d in delta])
-		L -= (nu + D) * s
+		L -= 0.5*(nu + D) * s
 		if L_prev is None:
 			L_prev = L
 			continue
