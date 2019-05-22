@@ -10,25 +10,6 @@ reload(common)
 
 import unittest
 
-'''
-def evaluate_posterior_probabilities(mus, Sigmas, _lambdas, new_datapoint):
-	if mus.shape[0] != _lambdas.size or mus.shape[0] != Sigmas.shape[0]:
-		raise AssertionError('\'mus\', \'Sigmas\', and/or \'_lambdas\' sizes don\'t match.')
-	if mus[0].size != new_datapoint.size:
-		raise AssertionError('\'mus\' and \'new_datapoint\' sizes don\'t match.')
-	if mus[0].size != Sigmas[0].shape[0] or Sigmas[0].shape[0] != Sigmas[0].shape[1]:
-		raise AssertionError('\'mus\' and \'Sigmas\' sizes don\'t match.')
-	likelihoods = np.zeros((mus.shape[0],))
-	posteriors = np.zeros_like(likelihoods)
-	for l in range(mus.shape[0]):
-		likelihoods[l] = stats.multivariate_normal.pdf(new_datapoint, mean=mus[l, :], cov=Sigmas[l, :, :])
-	denom = np.sum([p*lam for p, lam in zip(likelihoods, _lambdas)])
-	# Classify new datapoint using Bayes' rule
-	# (NOTE(jwd) - this approach is slow, but follows the pseudocode in the algorithm manual)
-	for i in range(mus.shape[0]):
-		posteriors[i] = likelihoods[i] * _lambdas[i] / denom
-	return posteriors
-'''
 
 def fit_gaussian_mixture(training_data, num_clusters, stopping_thresh=1e-2):
 	# Algorithm 7.1
