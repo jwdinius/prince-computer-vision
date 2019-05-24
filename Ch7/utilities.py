@@ -1,7 +1,7 @@
 import numpy as np
 import scipy.special as sci_spec
 import scipy.stats as stats
-from scipy.optimize import minimize, fminbound
+from scipy.optimize import minimize
 import sys
 sys.path.append("..")
 from importlib import reload
