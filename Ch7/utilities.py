@@ -5,8 +5,9 @@ from scipy.optimize import minimize
 import sys
 sys.path.append("..")
 from importlib import reload
-import common.utilities as common
-reload(common)
+from common import optimization
+reload(optimization)
+#import common.optimization.direct_line_search_1d as dls_1d
 
 import unittest
 
@@ -77,40 +78,35 @@ def fit_gaussian_mixture(training_data, num_clusters, stopping_thresh=1e-2):
 		L_prev = L
 	return _lambdas, mus, Sigmas
 
+def t_fit_cost(nu, E_h, E_logh):
+		nu_over_2 = 0.5 * nu
+		I = float(E_h.size)
+		# Eqn. 11.77 from Murphy's book
+		EL = -I * sci_spec.gammaln(nu_over_2) + I * nu_over_2 * np.log(nu_over_2) + nu_over_2 * np.sum(E_logh - E_h)
+		return -EL
 
-def fit_student_distribution(training_data, stopping_thresh=1e-2):
+def fit_student_distribution(training_data, nu_max=1000.0, stopping_thresh=1e-2):
 	# Algorithm 7.2
-	'''
-	TODO(jwd): THIS IS NOT WORKING PROPERLY
-	algorithm was compared against the pseudocode implementation (see Prince_Algorithms_Booklet.pdf) and
-	all signs and formulae are correct
-	'''
-	
 	I, D = [float(t) for t in training_data.shape]
 	
 	# initialization: follows footnote a) of algorithm guide
-	rng = np.random.RandomState(seed=0)
 	mu = np.mean(training_data, axis=0)
 	x_minus_mu = np.array([d - mu for d in training_data])
 	Sigma = np.zeros((int(D), int(D)))
 	for d in x_minus_mu:
 		Sigma += np.outer(d, d) / I
-	nu = 1000.
+	inv_sigma = np.linalg.inv(Sigma)
+	delta = np.array([d.reshape((1, int(D)))@inv_sigma@d.reshape((int(D), 1)) for d in x_minus_mu]).flatten()
+	# setup bounds for line search optimization for nu
+	nu_bounds = (0, nu_max)
+	nu = nu_max
 	
-	# define objective function for maximizing likelihood wrt nu
-	def t_fit_cost(nu, sum_E_h, sum_E_log_h, I):
-		nu_over_2 = 0.5 * nu
-		return -(float(I) * (nu_over_2 * np.log(nu_over_2) + sci_spec.gammaln(nu_over_2)) - (nu_over_2 - 1.) * sum_E_log_h + nu_over_2 * sum_E_h)
-
 	# initialize log-likelihood
 	L_prev = None
 	its = 0
 	while True:
 		its += 1
 		# Expectation step
-		x_minus_mu = np.array([np.copy(d - mu) for d in training_data])
-		inv_sigma = np.linalg.inv(np.copy(Sigma))
-		delta = np.array([d.reshape((1, int(D)))@inv_sigma@d.reshape((int(D), 1)) for d in x_minus_mu]).flatten()
 		E_h = np.array([(nu + D) / (nu + d) for d in delta]).flatten()
 		E_logh = np.array([sci_spec.digamma(0.5*(nu+D)) - np.log(0.5*(nu+d)) for d in delta]).flatten()
 		
@@ -119,17 +115,16 @@ def fit_student_distribution(training_data, stopping_thresh=1e-2):
 		sum_E_h_times_x = np.zeros((1, int(D)))
 		for i in range(int(I)):
 			sum_E_h_times_x += E_h[i] * training_data[i]
-		mu = sum_E_h_times_x / sum_E_h
-		x_minus_mu = np.array([np.copy(d - mu) for d in training_data])
+		mu = (sum_E_h_times_x / sum_E_h).reshape(int(D),)
+		x_minus_mu = np.array([d - mu for d in training_data])
 		Sigma = np.zeros((int(D), int(D)))
 		for i in range(int(I)):
 			d = x_minus_mu[i]
 			Sigma += E_h[i] * np.outer(d, d) / sum_E_h
-		inv_sigma = np.linalg.inv(np.copy(Sigma))
+		nu = optimization.direct_line_search_1d(t_fit_cost, nu_bounds, (E_h, E_logh), {"stopping_thresh": 0.5})
+		
+		inv_sigma = np.linalg.inv(Sigma)
 		delta = np.array([d.reshape((1, int(D)))@inv_sigma@d.reshape((int(D), 1)) for d in x_minus_mu]).flatten()
-		bnds = [(1e-15, 1e3)]
-		sol = minimize(t_fit_cost, nu, args=(np.sum(E_h), np.sum(E_logh), I), bounds=bnds)
-		nu = np.copy(sol.x)[0]
 		
 		# Compute the log likelihood
 		L = I * (sci_spec.gammaln(0.5*(nu + D)) - 0.5 * D * np.log(nu * np.pi) - 0.5 * np.log(np.linalg.det(Sigma)) - sci_spec.gammaln(0.5 * nu))
