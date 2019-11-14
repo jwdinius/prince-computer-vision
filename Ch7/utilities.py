@@ -148,24 +148,27 @@ def fit_factor_analyzer(training_data, num_factors, stopping_thresh=1e-2):
 	rng = np.random.RandomState(seed=0)
 	mu = np.mean(training_data, axis=0)
 	x_minus_mu = np.array([d - mu for d in training_data])
+	#print(x_minus_mu.shape)
 	Sigma = np.zeros((int(D), int(D)))
-	for d in x_minus_mu:
-		Sigma += np.diag(np.diag(np.outer(d, d))) / I
+	Sigma = np.sum([np.outer(d, d) for d in x_minus_mu]) / I
+	Sigma = np.diag(np.diag(Sigma))
+	#for i,d in enumerate(x_minus_mu):
+	#	Sigma += np.diag(np.diag(np.outer(d, d))) / I
 	# DxK
-	Phi = rng.random((int(D), int(num_factors)))
-	x_minus_mu = np.array([d - mu for d in training_data])
-
+	Phi = rng.randn(int(D), int(num_factors))
+	##x_minus_mu = np.array([d - mu for d in training_data])
+	print("here")
 	its = 0
 	while True:
 		its += 1
 		# Expectation step
-		inv_sigma = np.linalg.inv(Sigma)
+		inv_sigma = np.diag(np.diag(np.linalg.inv(Sigma)))
 		# KxD
-		M = Phi.T@np.linalg.inv(Sigma)
+		M = Phi.T@inv_sigma
 		# KxK
 		_I = np.eye(int(D))
 		# KxD
-		_M = np.linalg.inv(M@Phi + I)
+		_M = np.linalg.inv(M@Phi + _I)
 		E_h = np.zeros((int(I), int(num_clusters)))
 		E_hht = np.zeros((int(I), int(num_clusters), int(num_clusters)))
 		for i in range(int(I)):
@@ -192,6 +195,7 @@ def fit_factor_analyzer(training_data, num_factors, stopping_thresh=1e-2):
 				_Sigma = Sigma + Phi@Phi.T
 				tmp[i] = stats.multivariate_normal.pdf(training_data[i, :], mean=mu, cov=_Sigma)
 		L = np.sum(np.log(tmp))
+		print("{}, {}".format(its, L))
 		if L_prev is None:
 			L_prev = L
 			continue
