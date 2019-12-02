@@ -140,7 +140,7 @@ def fit_student_distribution(training_data, nu_max=1000.0, stopping_thresh=1e-2)
 	return mu, Sigma, nu
 
 
-def fit_factor_analyzer(training_data, num_factors, stopping_thresh=1e-2):
+def fit_factor_analyzer(training_data, num_factors, stopping_thresh=1e-2, N_subsample=25, max_its=None):
 	# Algorithm 7.3
 	I, D = [float(t) for t in training_data.shape]
 	
@@ -149,60 +149,67 @@ def fit_factor_analyzer(training_data, num_factors, stopping_thresh=1e-2):
 	mu = np.mean(training_data, axis=0)
 	x_minus_mu = np.array([d - mu for d in training_data])
 	#print(x_minus_mu.shape)
-	Sigma = np.zeros((int(D), int(D)))
-	Sigma = np.sum([np.outer(d, d) for d in x_minus_mu]) / I
-	Sigma = np.diag(np.diag(Sigma))
+	#Sigma = np.zeros((int(D), int(D)))
+	P = np.array([np.multiply(d, d) for d in x_minus_mu])
+	#print(np.sum(P, axis=0).shape)
+	Sigma = np.diag(np.sum(P, axis=0)) / I
+	#Sigma = np.diag(np.diag(Sigma))
 	#for i,d in enumerate(x_minus_mu):
 	#	Sigma += np.diag(np.diag(np.outer(d, d))) / I
 	# DxK
 	Phi = rng.randn(int(D), int(num_factors))
 	##x_minus_mu = np.array([d - mu for d in training_data])
-	print("here")
+	#print("here")
+	# only sample a few points, randomly, for convergence check to speed up computation
+	inds = rng.choice([a for a in range(int(I))], N_subsample, replace=False)
+	L_prev = None
 	its = 0
-	while True:
+	while True or (max_its and its < max_its):
 		its += 1
+		print("iteration {}".format(its))
 		# Expectation step
 		inv_sigma = np.diag(np.diag(np.linalg.inv(Sigma)))
 		# KxD
 		M = Phi.T@inv_sigma
 		# KxK
-		_I = np.eye(int(D))
-		# KxD
+		_I = np.eye(int(num_factors))
+		# KxK
 		_M = np.linalg.inv(M@Phi + _I)
-		E_h = np.zeros((int(I), int(num_clusters)))
-		E_hht = np.zeros((int(I), int(num_clusters), int(num_clusters)))
+		E_h = np.zeros((int(I), int(num_factors)))
+		E_hht = np.zeros((int(I), int(num_factors), int(num_factors)))
 		for i in range(int(I)):
 			E_h[i, :] = ((_M@M)@x_minus_mu[i].T).T
 			E_hht[i, :, :] = _M + E_h[i, :].T@E_h[i, :]
 
 		# Maximization step
-		sum_E_hht = np.zeros((int(num_clusters), int(num_clusters)))
+		sum_E_hht = np.zeros((int(num_factors), int(num_factors)))
 		Phi = np.zeros((int(D), int(num_factors)))
 		Sigma = np.zeros((int(D), int(D)))
 		for i in range(int(I)):
-			d = x_minus_mu[i].T
-			sum_E_hht += E_hht[i, :, :].reshape((int(num_clusters), int(num_clusters)))
-			Phi += d@E_h[i]
+			d = (x_minus_mu[i].T).reshape((int(D), 1))
+			sum_E_hht += E_hht[i, :, :].reshape((int(num_factors), int(num_factors)))
+			Phi += np.outer(d, E_h[i, :])
 			ddt = d@d.T
-			Sigma += ddt - Phi@E_h[i, :].T@d.T
+			e = E_h[i, :].reshape((1, int(num_factors)))
+			temp = Phi@e.T@d.T
+			Sigma += ddt - temp
 		Phi = Phi@np.linalg.inv(sum_E_hht)
 		Sigma = np.diag(np.diag(Sigma)) / I
-
-		# Compute Data Log Likelihood and EM Bound
-		tmp = np.zeros((int(I),)).flatten()
-		for i in range(int(I)):
-			for k in range(num_clusters):
-				_Sigma = Sigma + Phi@Phi.T
-				tmp[i] = stats.multivariate_normal.pdf(training_data[i, :], mean=mu, cov=_Sigma)
-		L = np.sum(np.log(tmp))
-		print("{}, {}".format(its, L))
-		if L_prev is None:
+		if not max_its:
+			# Compute Data Log Likelihood and EM Bound
+			tmp = np.zeros((int(I),)).flatten()
+			_Sigma = Sigma + Phi@Phi.T
+			for i in range(N_subsample):
+				tmp[i] = stats.multivariate_normal.logpdf(training_data[inds[i], :], mean=mu, cov=_Sigma, allow_singular=True)
+			L = np.sum(tmp)
+			print("{}, {}".format(its, L))
+			if L_prev is None:
+				L_prev = L
+				continue
+			if np.abs(L-L_prev) < stopping_thresh:
+				print('stopping criteria met after {its} iterations.'.format(its=its))
+				break
 			L_prev = L
-			continue
-		if np.abs(L-L_prev) < stopping_thresh:
-			print('stopping criteria met after {its} iterations.'.format(its=its))
-			break
-		L_prev = L
 	return mu, Phi, Sigma
 
 class TestFMOG(unittest.TestCase):
