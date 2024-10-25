@@ -2,24 +2,22 @@ name: cv-prince
 channels:
     - conda-forge
 dependencies:
-    - python
-    - pip
-    - numpy
-    - matplotlib
-    - jupyter
-    - opencv
-    - pillow
-    - scikit-learn
-    - scikit-image
-    - scipy
-    - h5py
-    - eventlet
-    - flask-socketio
-    - seaborn
-    - pandas
-    - imageio
-    - sympy
+    - python==3.10
+    - pip==24.2
+    - numpy==1.26
+    - matplotlib==3.9.2
+    - jupyter==1.0
+    - opencv==4.10
+    - pillow==11.0
+    - scikit-learn==1.5
+    - scikit-image==0.24
+    - scipy==1.14
+    - h5py==3.10
+    - eventlet==0.37
+    - flask-socketio==5.3
+    - seaborn==0.13
+    - pandas==1.5
+    - imageio==2.36
+    - sympy==1.13
     - pip:
-        - moviepy
-        - tensorflow==1.13.1
-        - git+https://github.com/fchollet/keras.git
+        - moviepy==1.0
